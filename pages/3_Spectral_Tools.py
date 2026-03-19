@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.io_utils import load_spectrum_file, load_multiple_files, to_excel_download
+from utils.io_utils import load_spectrum_file, load_multiple_files, to_excel_download_dict as to_excel_download
 from utils.fitting_utils import raman_shift_to_wavelength, intensity_jacobian_transform, wavelength_to_eV
 from utils.plot_utils import make_figure, style_axes, COLORS, rainbow_colors
 

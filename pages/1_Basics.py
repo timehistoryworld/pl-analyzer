@@ -7,10 +7,21 @@ import pandas as pd
 import plotly.graph_objects as go
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.io_utils import load_multiple_files, interpolate_to_common_grid, to_excel_download
+from utils.io_utils import load_multiple_files, interpolate_spectra, to_excel_download_dict as to_excel_download
 from utils.fitting_utils import detect_peaks, fit_peak_gaussian, gaussian, multi_gaussian, fwhm_from_gaussian_sigma
 from utils.plot_utils import make_figure, style_axes, add_spectrum, COLORS, rainbow_colors
 from scipy.optimize import curve_fit
+
+@st.cache_data(show_spinner="Gaussian 피팅 중...")
+def _cached_multi_gaussian_fit(wl: bytes, inten: bytes, p0: tuple, bounds_lo: tuple, bounds_hi: tuple):
+    """Multi-Gaussian curve_fit — 같은 데이터+초기값이면 재계산 없이 캐시 반환."""
+    wl_arr    = np.frombuffer(wl,    dtype=float)
+    inten_arr = np.frombuffer(inten, dtype=float)
+    popt, pcov = curve_fit(multi_gaussian, wl_arr, inten_arr,
+                            p0=list(p0),
+                            bounds=(list(bounds_lo), list(bounds_hi)),
+                            maxfev=50000)
+    return popt, pcov
 
 st.set_page_config(page_title="Basics | PL Analyzer", layout="wide", page_icon="📊")
 st.title("📊 Basics — Peak Analysis & Gaussian Fitting")
@@ -99,7 +110,7 @@ with tab2:
     if len(sel_spectra) < 1:
         st.warning("파일을 선택하세요")
     else:
-        common_wl, interp_list = interpolate_to_common_grid(sel_spectra)
+        common_wl, interp_list = interpolate_spectra(sel_spectra)
         stack = np.array(interp_list)
 
         avg_inten = np.mean(stack, axis=0)
@@ -226,10 +237,10 @@ with tab4:
 
     if st.button("🔄 피팅 실행", type="primary"):
         try:
-            popt, pcov = curve_fit(multi_gaussian, wl2, inten2,
-                                    p0=p0,
-                                    bounds=(bounds_lo, bounds_hi),
-                                    maxfev=50000)
+            popt, pcov = _cached_multi_gaussian_fit(
+                wl2.tobytes(), inten2.tobytes(),
+                tuple(p0), tuple(bounds_lo), tuple(bounds_hi)
+            )
             perr = np.sqrt(np.diag(pcov))
 
             wl_fine = np.linspace(wl2.min(), wl2.max(), 2000)

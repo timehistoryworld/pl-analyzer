@@ -17,7 +17,7 @@ from scipy.signal import fftconvolve
 from scipy.interpolate import interp1d
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.io_utils import load_spectrum_file, load_multiple_files, to_excel_download
+from utils.io_utils import load_spectrum_file, load_multiple_files, to_excel_download_dict as to_excel_download
 from utils.fitting_utils import amplitude_weighted_lifetime, intensity_weighted_lifetime
 from utils.plot_utils import make_figure, style_axes, COLORS, rainbow_colors
 
@@ -86,19 +86,24 @@ def reduced_chi2(data, model_vals, n_params):
     return chi2 / dof
 
 
-def lifetime_distribution(t, I, irf_t=None, irf_y=None,
+@st.cache_data(show_spinner="Lifetime distribution 계산 중...")
+def lifetime_distribution(t_bytes: bytes, I_bytes: bytes,
+                           irf_t_bytes=None, irf_y_bytes=None,
                            n_tau=150, tau_min=0.01, tau_max=1000.0, alpha=1e-3):
     """
     Tikhonov-regularized NNLS lifetime distribution.
-    I(t) ≈ K @ p,  K[i,j] = exp(-t[i]/tau[j])  (or IRF-convolved).
-    Returns tau_grid, p (unnormalized amplitudes).
+    bytes 인자로 받아 캐시 해싱이 가능하도록 설계.
     """
+    t = np.frombuffer(t_bytes, dtype=float)
+    I = np.frombuffer(I_bytes, dtype=float)
     tau_grid = np.logspace(np.log10(tau_min), np.log10(tau_max), n_tau)
 
     # Build kernel
     K = np.exp(-np.outer(t, 1.0 / tau_grid))
 
-    if irf_t is not None and irf_y is not None:
+    if irf_t_bytes is not None and irf_y_bytes is not None:
+        irf_t = np.frombuffer(irf_t_bytes, dtype=float)
+        irf_y = np.frombuffer(irf_y_bytes, dtype=float)
         irf_fn  = interp1d(irf_t, irf_y, bounds_error=False, fill_value=0.0)
         irf_col = np.clip(irf_fn(t), 0, None)
         irf_col /= (irf_col.sum() + 1e-30)
@@ -569,8 +574,9 @@ with tab_dist:
                 irf_y_use = np.clip((irf_y_raw - irf_offset_)*irf_scale_, 0, None) if irf_loaded else None
 
                 tau_grid, p_tau = lifetime_distribution(
-                    t_d, I_d,
-                    irf_t=irf_t_use, irf_y=irf_y_use,
+                    t_d.tobytes(), I_d.tobytes(),
+                    irf_t_bytes=irf_t_use.tobytes() if irf_t_use is not None else None,
+                    irf_y_bytes=irf_y_use.tobytes() if irf_y_use is not None else None,
                     n_tau=n_tau_pts, tau_min=tau_lo, tau_max=tau_hi,
                     alpha=alpha_reg)
 

@@ -10,10 +10,35 @@ from plotly.subplots import make_subplots
 from scipy.optimize import curve_fit
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.io_utils import load_multiple_files, to_excel_download
+from utils.io_utils import load_multiple_files, to_excel_download_dict as to_excel_download
 from utils.fitting_utils import (varshni, bose_einstein, pl_quenching,
                                   fwhm_from_gaussian_sigma, fit_peak_gaussian, detect_peaks)
 from utils.plot_utils import make_figure, style_axes, rainbow_colors, COLORS
+
+@st.cache_data(show_spinner=False)
+def _cached_varshni(temps: tuple, y_data: tuple, p0: tuple):
+    from scipy.optimize import curve_fit as _cf
+    from utils.fitting_utils import varshni
+    t = np.array(temps); y = np.array(y_data)
+    popt, pcov = _cf(varshni, t, y, p0=list(p0), maxfev=10000)
+    return popt, pcov
+
+@st.cache_data(show_spinner=False)
+def _cached_bose_einstein(temps: tuple, y_data: tuple, p0: tuple):
+    from scipy.optimize import curve_fit as _cf
+    from utils.fitting_utils import bose_einstein
+    t = np.array(temps); y = np.array(y_data)
+    popt, pcov = _cf(bose_einstein, t, y, p0=list(p0), maxfev=10000)
+    return popt, pcov
+
+@st.cache_data(show_spinner=False)
+def _cached_pl_quenching(temps: tuple, integrals: tuple, p0: tuple):
+    from scipy.optimize import curve_fit as _cf
+    from utils.fitting_utils import pl_quenching
+    t = np.array(temps); y = np.array(integrals)
+    popt, pcov = _cf(pl_quenching, t, y,
+                     p0=list(p0), bounds=([0,0,0],[2,1e6,5]), maxfev=20000)
+    return popt, pcov
 
 st.set_page_config(page_title="Temp PL | PL Analyzer", layout="wide", page_icon="🌡")
 st.title("🌡 Temperature-Dependent PL Analysis")
@@ -144,9 +169,10 @@ with tab_peak:
         if fit_varshni:
             try:
                 E0_init = y_data[temps == temps.min()][0] if y_data.size else y_data[0]
-                popt_v, pcov_v = curve_fit(varshni, temps, y_data,
-                                            p0=[E0_init, 1e-4, 100],
-                                            maxfev=10000)
+                popt_v, pcov_v = _cached_varshni(
+                    tuple(temps.tolist()), tuple(y_data.tolist()),
+                    (E0_init, 1e-4, 100)
+                )
                 y_v = varshni(T_fit, *popt_v)
                 fig_peak.add_trace(go.Scatter(x=T_fit, y=y_v, name='Varshni fit',
                                               line=dict(color=COLORS[1], width=2.5, dash='dash')))
@@ -170,9 +196,10 @@ with tab_peak:
         if fit_bose:
             try:
                 E0_init = y_data[temps == temps.min()][0] if y_data.size else y_data[0]
-                popt_b, pcov_b = curve_fit(bose_einstein, temps, y_data,
-                                            p0=[E0_init, 0.01, 150],
-                                            maxfev=10000)
+                popt_b, pcov_b = _cached_bose_einstein(
+                    tuple(temps.tolist()), tuple(y_data.tolist()),
+                    (E0_init, 0.01, 150)
+                )
                 y_b = bose_einstein(T_fit, *popt_b)
                 fig_peak.add_trace(go.Scatter(x=T_fit, y=y_b, name='Bose-Einstein fit',
                                               line=dict(color=COLORS[2], width=2.5, dash='dot')))
@@ -231,10 +258,10 @@ with tab_quench:
 
     if st.checkbox("열적 소광 피팅: I(T) = I₀ / (1 + A·exp(-Ea/kBT))", value=True):
         try:
-            popt_q, pcov_q = curve_fit(pl_quenching, temps, norm_integral,
-                                        p0=[1.0, 1.0, 0.1],
-                                        bounds=([0, 0, 0], [2, 1e6, 5]),
-                                        maxfev=20000)
+            popt_q, pcov_q = _cached_pl_quenching(
+                tuple(temps.tolist()), tuple(norm_integral.tolist()),
+                (1.0, 1.0, 0.1)
+            )
             T_fit_q = np.linspace(temps.min(), temps.max(), 300)
             I_fit_q = pl_quenching(T_fit_q, *popt_q)
             fig_q.add_trace(go.Scatter(x=T_fit_q, y=I_fit_q, name='Thermal quenching fit',

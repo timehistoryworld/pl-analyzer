@@ -9,9 +9,43 @@ from plotly.subplots import make_subplots
 from scipy.optimize import curve_fit
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.io_utils import load_multiple_files, to_excel_download
+from utils.io_utils import load_multiple_files, to_excel_download_dict as to_excel_download
 from utils.fitting_utils import (gaussian, voigt_approx, fwhm_from_gaussian_sigma, detect_peaks)
 from utils.plot_utils import make_figure, style_axes, COLORS, rainbow_colors
+
+@st.cache_data(show_spinner="피팅 중...")
+def _cached_deconv_fit(wl_bytes: bytes, inten_bytes: bytes,
+                        p0: tuple, bounds_lo: tuple, bounds_hi: tuple,
+                        n_comp: int, peak_shape: str, n_baseline: int):
+    """Deconvolution curve_fit — 동일 데이터+파라미터면 캐시 반환."""
+    from scipy.optimize import curve_fit as _cf
+    from utils.fitting_utils import gaussian, voigt_approx
+    wl    = np.frombuffer(wl_bytes,    dtype=float)
+    inten = np.frombuffer(inten_bytes, dtype=float)
+
+    n_params_per = 4 if peak_shape == "Voigt (pseudo)" else 3
+
+    def model(x, *params):
+        components     = params[:n_comp * n_params_per]
+        baseline_params = params[n_comp * n_params_per:]
+        y = np.zeros_like(x, dtype=float)
+        for k in range(n_comp):
+            p = components[k * n_params_per:(k+1) * n_params_per]
+            if peak_shape == "Gaussian":
+                amp, cen, sig = p
+                y += gaussian(x, amp, abs(cen), abs(sig))
+            else:
+                amp, cen, sig, gam = p
+                y += voigt_approx(x, amp, cen, abs(sig), abs(gam))
+        if n_baseline == 1:
+            y += baseline_params[0]
+        elif n_baseline == 2:
+            y += baseline_params[0] + baseline_params[1] * x
+        return y
+
+    popt, pcov = _cf(model, wl, inten, p0=list(p0),
+                     bounds=(list(bounds_lo), list(bounds_hi)), maxfev=100000)
+    return popt, pcov
 
 st.set_page_config(page_title="Deconvolution | PL Analyzer", layout="wide", page_icon="🔬")
 st.title("🔬 Spectral Deconvolution — Multi-component Fitting")
@@ -87,61 +121,56 @@ with st.expander("제약 조건 설정"):
     fix_sigmas  = st.checkbox("Sigma 고정", value=False)
     center_tol  = st.slider("Center 허용 범위 ±(nm)", 0.0, 100.0, 20.0, 1.0) if not fix_centers else 0.0
 
-# Baseline
+# Fitting
 if st.button("🔄 피팅 실행", type="primary"):
-    # Build model function
     n_params_per = 4 if peak_shape == "Voigt (pseudo)" else 3
-    n_baseline = {'없음': 0, '상수': 1, '선형': 2}[baseline_mode]
+    n_baseline   = {'없음': 0, '상수': 1, '선형': 2}[baseline_mode]
 
+    # Build p0 and bounds
+    p0, lo, hi = [], [], []
+    for i in range(n):
+        row  = edited_init.iloc[i]
+        amp0 = float(row['Amplitude'])
+        cen0 = float(row['Center (nm)'])
+        sig0 = float(row['Sigma (nm)'])
+        p0  += [amp0, cen0, sig0]
+        lo  += [0,
+                cen0 if fix_centers else max(wl_lo, cen0 - center_tol),
+                0.1  if not fix_sigmas else sig0 * 0.99]
+        hi  += [amp0 * 10,
+                cen0 if fix_centers else min(wl_hi, cen0 + center_tol),
+                300  if not fix_sigmas else sig0 * 1.01]
+        if peak_shape == "Voigt (pseudo)":
+            gam0 = float(row['Gamma (nm)'])
+            p0.append(gam0); lo.append(0.1); hi.append(200)
+
+    if n_baseline >= 1:
+        p0.append(0.0); lo.append(-inten_fit.max()); hi.append(inten_fit.max())
+    if n_baseline == 2:
+        p0.append(0.0); lo.append(-1); hi.append(1)
+
+    # Rebuild model for result evaluation (캐시 함수가 내부에서 동일 모델 사용)
     def model(x, *params):
-        components = params[:n * n_params_per]
-        baseline_params = params[n * n_params_per:]
         y = np.zeros_like(x, dtype=float)
         for k in range(n):
-            p = components[k * n_params_per:(k+1) * n_params_per]
+            p = params[k * n_params_per:(k+1) * n_params_per]
             if peak_shape == "Gaussian":
                 amp, cen, sig = p
                 y += gaussian(x, amp, abs(cen), abs(sig))
             else:
                 amp, cen, sig, gam = p
                 y += voigt_approx(x, amp, cen, abs(sig), abs(gam))
-        if n_baseline == 1:
-            y += baseline_params[0]
-        elif n_baseline == 2:
-            y += baseline_params[0] + baseline_params[1] * x
+        bp = params[n * n_params_per:]
+        if n_baseline == 1: y += bp[0]
+        elif n_baseline == 2: y += bp[0] + bp[1] * x
         return y
 
-    # Build p0 and bounds
-    p0, lo, hi = [], [], []
-    for i in range(n):
-        row = edited_init.iloc[i]
-        amp0 = float(row['Amplitude'])
-        cen0 = float(row['Center (nm)'])
-        sig0 = float(row['Sigma (nm)'])
-
-        p0 += [amp0, cen0, sig0]
-        lo += [0,
-               cen0 if fix_centers else max(wl_lo, cen0 - center_tol),
-               0.1 if not fix_sigmas else sig0 * 0.99]
-        hi += [amp0 * 10,
-               cen0 if fix_centers else min(wl_hi, cen0 + center_tol),
-               300 if not fix_sigmas else sig0 * 1.01]
-
-        if peak_shape == "Voigt (pseudo)":
-            gam0 = float(row['Gamma (nm)'])
-            p0.append(gam0)
-            lo.append(0.1)
-            hi.append(200)
-
-    # Baseline
-    if n_baseline >= 1:
-        p0.append(0.0); lo.append(-inten_fit.max()); hi.append(inten_fit.max())
-    if n_baseline == 2:
-        p0.append(0.0); lo.append(-1); hi.append(1)
-
     try:
-        popt, pcov = curve_fit(model, wl_fit, inten_fit, p0=p0,
-                                bounds=(lo, hi), maxfev=100000)
+        popt, pcov = _cached_deconv_fit(
+            wl_fit.tobytes(), inten_fit.tobytes(),
+            tuple(p0), tuple(lo), tuple(hi),
+            n, peak_shape, n_baseline
+        )
         perr = np.sqrt(np.diag(pcov))
         wl_fine = np.linspace(wl_fit.min(), wl_fit.max(), 2000)
         y_total = model(wl_fine, *popt)

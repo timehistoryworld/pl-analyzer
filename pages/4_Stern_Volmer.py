@@ -8,9 +8,26 @@ import plotly.graph_objects as go
 from scipy.optimize import curve_fit
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.io_utils import load_multiple_files, to_excel_download
+from utils.io_utils import load_multiple_files, to_excel_download_dict as to_excel_download
 from utils.fitting_utils import stern_volmer_linear, stern_volmer_modified, stern_volmer_combined
 from utils.plot_utils import make_figure, style_axes, COLORS, rainbow_colors
+
+@st.cache_data(show_spinner=False)
+def _cached_sv_fit(concs: tuple, i0_i: tuple, model_name: str, p0: tuple):
+    """Stern-Volmer curve_fit 캐시."""
+    from scipy.optimize import curve_fit as _cf
+    from utils.fitting_utils import stern_volmer_linear, stern_volmer_modified, stern_volmer_combined
+    concs_arr = np.array(concs)
+    i0_i_arr  = np.array(i0_i)
+    model_map = {
+        "선형": stern_volmer_linear,
+        "Modified": stern_volmer_modified,
+        "Combined": stern_volmer_combined,
+    }
+    fn = model_map[model_name]
+    popt, pcov = _cf(fn, concs_arr, i0_i_arr, p0=list(p0),
+                     maxfev=10000, bounds=(0, np.inf))
+    return popt, pcov
 
 st.set_page_config(page_title="Stern-Volmer | PL Analyzer", layout="wide", page_icon="📉")
 st.title("📉 Stern-Volmer — Quenching Analysis")
@@ -116,10 +133,14 @@ with tab_sv:
     c_fit = np.linspace(concs.min(), concs.max(), 300)
     fit_results = []
 
+    model_short = {"선형 SV": "선형", "Modified SV": "Modified", "Combined SV": "Combined"}
+
     def try_fit(model_func, p0, name, color):
         try:
-            popt, pcov = curve_fit(model_func, concs, I0_I, p0=p0,
-                                    maxfev=10000, bounds=(0, np.inf))
+            popt, pcov = _cached_sv_fit(
+                tuple(concs.tolist()), tuple(I0_I.tolist()),
+                model_short.get(name, "선형"), tuple(p0)
+            )
             perr = np.sqrt(np.diag(pcov))
             y_fit = model_func(c_fit, *popt)
             residuals = I0_I - model_func(concs, *popt)
