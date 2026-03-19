@@ -1,5 +1,5 @@
 """
-PL Analyzer — Photoluminescence Analysis Suite
+PL Analyzer — Steady-State Photoluminescence Analysis Suite
 Main entry point / Home page
 """
 import streamlit as st
@@ -100,7 +100,7 @@ html, body, [class*="css"] {
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown('<div class="main-title">PL Analyzer</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Photoluminescence Analysis Suite · v1.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Steady-State Photoluminescence Analysis Suite · v1.0</div>', unsafe_allow_html=True)
 
 st.markdown('<div class="info-box">📁 <b>지원 파일 형식:</b> CSV, TXT, Excel (.xlsx/.xls) &nbsp;|&nbsp; 구분자: 쉼표, 탭, 공백 자동 인식 &nbsp;|&nbsp; 첫 번째 열: 파장(nm), 두 번째 열: 강도</div>', unsafe_allow_html=True)
 st.markdown('<br>', unsafe_allow_html=True)
